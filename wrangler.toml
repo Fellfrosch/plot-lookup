@@ -1,0 +1,8 @@
+name = "plot-lookup"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+# Кои сайтове могат да ползват Worker-а. "*" = всички.
+# Пример: "https://petar.github.io,http://localhost:8000"
+ALLOWED_ORIGINS = "*"

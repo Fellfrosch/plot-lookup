@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="bg">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Справка за поземлен имот</title>
+<meta name="description" content="Кадастър, ОУП, ПУП, УПИ и НКЦ за поземлен имот по идентификатор — iSofMap и КАИС.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M5 9 L24 4 L28 22 L9 28 Z' fill='%23E9ECE8' stroke='%23C42B2B' stroke-width='2.5'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600&display=swap" rel="stylesheet">
+<script>
+  // ⇩ Адресът на вашия Cloudflare Worker (без наклонена черта накрая).
+  window.PLOT_API = "https://plot-lookup.YOUR-SUBDOMAIN.workers.dev";
+</script>
+<style>
+  :root {
+    --paper: #F2F4F0;
+    --sheet: #FAFBF8;
+    --ink: #16232B;
+    --muted: #56656C;
+    --rule: #D3D9D5;
+    --boundary: #C42B2B;
+    --plot-fill: #E6EAE5;
+    --building: #C3CCC7;
+    --reg: #2457A4;
+    --warn-bg: #FFF1D6;
+    --warn-ink: #7A4A00;
+    --focus: #2457A4;
+    color-scheme: light;
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #11191D; --sheet: #172126; --ink: #E3E9E6; --muted: #9AA9AF; --rule: #2B3A40;
+      --boundary: #F0675B; --plot-fill: #1F2C31; --building: #3A4A50; --reg: #86ABEB;
+      --warn-bg: #3A2C12; --warn-ink: #F3CF8A; --focus: #86ABEB; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #11191D; --sheet: #172126; --ink: #E3E9E6; --muted: #9AA9AF; --rule: #2B3A40;
+    --boundary: #F0675B; --plot-fill: #1F2C31; --building: #3A4A50; --reg: #86ABEB;
+    --warn-bg: #3A2C12; --warn-ink: #F3CF8A; --focus: #86ABEB; color-scheme: dark;
+  }
+  *, *::before, *::after { box-sizing: inherit; }
+  html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 400 16px/1.5 "Golos Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  a { color: var(--reg); }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 20px; }
+
+  header.top { padding-top: 32px; padding-bottom: 20px; }
+  h1 { font-size: 1.75rem; line-height: 1.2; font-weight: 600; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .lede { margin: 0; color: var(--muted); max-width: 62ch; }
+
+  form.search { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; margin-top: 20px; }
+  .field { flex: 1 1 360px; display: flex; border: 1.5px solid var(--ink); background: var(--sheet); border-radius: 3px; }
+  .field input {
+    flex: 1; min-width: 0; border: 0; background: transparent; color: var(--ink);
+    font-family: inherit; font-size: 1.125rem; font-weight: 500; line-height: 1.2; padding: 12px 14px; letter-spacing: 0.02em;
+  }
+  .field input:focus { outline: none; }
+  .field:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .field button {
+    border: 0; border-left: 1.5px solid var(--ink); background: var(--ink); color: var(--sheet);
+    font-family: inherit; font-size: 1rem; font-weight: 600; padding: 0 20px; cursor: pointer;
+  }
+  .field button:disabled { opacity: .6; cursor: progress; }
+  label.opt { display: inline-flex; gap: 8px; align-items: center; color: var(--muted); font-size: .9375rem; cursor: pointer; }
+  label.opt input { width: 16px; height: 16px; accent-color: var(--reg); }
+  .examples { margin: 10px 0 0; font-size: .9375rem; color: var(--muted); }
+  .examples button { font: inherit; color: var(--reg); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+
+  .notice { margin: 20px 0 0; padding: 12px 14px; background: var(--warn-bg); color: var(--warn-ink); border-radius: 3px; max-width: 72ch; }
+
+  main { padding-bottom: 48px; }
+  article.plot {
+    display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 28px;
+    border-top: 2px solid var(--ink); padding: 24px 0 32px; margin-top: 8px;
+  }
+  @media (max-width: 760px) {
+    article.plot { display: flex; flex-direction: column; gap: 20px; }
+    article.plot > .col { display: contents; }
+    article.plot .head { order: 0; }
+    article.plot .side { order: 1; }
+    article.plot .status, article.plot .body { order: 2; }
+  }
+
+  .side { align-self: start; position: sticky; top: calc(16px + env(safe-area-inset-top, 0px)); }
+  @media (max-width: 760px) { .side { position: static; } }
+  .sheet { background: var(--sheet); border: 1px solid var(--rule); border-radius: 3px; }
+  .sheet svg { display: block; width: 100%; height: auto; }
+  .sheet .empty { padding: 48px 16px; text-align: center; color: var(--muted); font-size: .875rem; }
+  dl.keys { margin: 16px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: .9375rem; }
+  dl.keys dt { color: var(--muted); }
+  dl.keys dd { margin: 0; font-weight: 500; }
+  .side .actions { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .btn {
+    font-family: inherit; font-size: .875rem; font-weight: 500; line-height: 1.2; color: var(--ink); background: transparent;
+    border: 1.5px solid var(--ink); border-radius: 3px; padding: 8px 12px; cursor: pointer;
+    display: inline-block; text-decoration: none;
+  }
+
+  .head h2 { font-size: 1.5rem; font-weight: 600; line-height: 1.2; margin: 0; letter-spacing: 0.01em; }
+  .head p { margin: 4px 0 0; color: var(--muted); }
+  .status { margin-top: 12px; color: var(--muted); font-size: .9375rem; }
+  .status::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; background: var(--reg); animation: pulse 1s ease-in-out infinite alternate; }
+  @keyframes pulse { from { opacity: .25; } to { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .status::before { animation: none; } }
+
+  .warns { margin: 16px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+  .warns li { background: var(--warn-bg); color: var(--warn-ink); padding: 10px 14px; border-left: 4px solid currentColor; border-radius: 2px; }
+  .error { margin-top: 16px; color: var(--boundary); }
+
+  section.grp { margin-top: 28px; }
+  section.grp > h3 { font-size: 1.0625rem; font-weight: 600; margin: 0 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--rule); }
+  .tbl { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: .9375rem; }
+  table + table, .tbl + .tbl { margin-top: 14px; }
+  caption { text-align: left; font-weight: 500; padding: 0 0 6px; color: var(--reg); }
+  th, td { text-align: left; vertical-align: top; padding: 6px 12px 6px 0; border-bottom: 1px solid var(--rule); }
+  table.kv th { width: 38%; font-weight: 400; color: var(--muted); }
+  table.list th { font-weight: 500; color: var(--muted); font-size: .875rem; }
+  td.n, th.n { text-align: right; white-space: nowrap; }
+  .sum { margin: 10px 0 0; font-size: .9375rem; }
+  .maxima { margin-top: 14px; padding: 12px 14px; border: 1px dashed var(--reg); border-radius: 3px; font-size: .9375rem; }
+  .maxima strong { font-weight: 600; }
+  .notes { margin: 24px 0 0; padding: 0; list-style: none; color: var(--muted); font-size: .875rem; display: grid; gap: 6px; max-width: 78ch; }
+  .absent { color: var(--muted); font-size: .9375rem; margin: 8px 0 0; }
+
+  footer { border-top: 1px solid var(--rule); padding: 20px 0 32px; color: var(--muted); font-size: .875rem; }
+  footer p { margin: 0 0 6px; max-width: 78ch; }
+</style>
+</head>
+<body>
+<header class="top wrap">
+  <h1>Справка за поземлен имот</h1>
+  <p class="lede">Кадастър, сгради, ОУП, ПУП и УПИ, НКЦ и общинска собственост по идентификатор. За Столична община данните са от iSofMap, за останалата страна — от КАИС.</p>
+  <form class="search" id="form" autocomplete="off">
+    <div class="field">
+      <input id="ids" name="ids" inputmode="decimal" aria-label="Идентификатор на поземлен имот" placeholder="44063.6207.271" spellcheck="false">
+      <button id="go" type="submit">Провери</button>
+    </div>
+    <label class="opt"><input type="checkbox" id="withKais"> Сравни и с КАИС (съседи, разлики)</label>
+  </form>
+  <p class="examples">Може няколко наведнъж, разделени с интервал или запетая. Пример:
+    <button type="button" data-ex="68134.630.52">68134.630.52</button>,
+    <button type="button" data-ex="44063.6207.271">44063.6207.271</button>,
+    <button type="button" data-ex="73198.501.1">73198.501.1</button></p>
+  <div id="config" class="notice" hidden>Страницата още не е свързана с Worker. Задайте адреса му в <code>window.PLOT_API</code> в началото на index.html.</div>
+</header>
+
+<main class="wrap" id="results" aria-live="polite"></main>
+
+<footer class="wrap">
+  <p>Данните идват на живо от iSofMap (ГИС-София) и КАИС (АГКК). iSofMap може да изостава от КККР с няколко седмици; при съмнение пуснете сравнението с КАИС.</p>
+  <p>Показателите по ОУП и ПУП са пределни. Справката не замества скица, виза или удостоверение. Имена на собственици и самостоятелни обекти не са публични.</p>
+</footer>
+
+<script src="core.js"></script>
+<script>
+(() => {
+  const P = window.PlotLookup;
+  const API = String(window.PLOT_API || "");
+  const configured = /^https?:\/\//.test(API) && !API.includes("YOUR-SUBDOMAIN");
+  const $ = (s, el = document) => el.querySelector(s);
+  const form = $("#form"), input = $("#ids"), go = $("#go"), withKais = $("#withKais"), results = $("#results");
+  if (!configured) $("#config").hidden = false;
+  const api = new P.Api(API);
+
+  // ---------- tiny DOM helpers (all external data goes through textContent) ----------
+  function h(tag, attrs, ...kids) {
+    const el = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v == null || v === false) continue;
+      if (k === "class") el.className = v; else if (k === "text") el.textContent = v; else el.setAttribute(k, v);
+    }
+    for (const k of kids.flat(Infinity)) if (k != null) el.append(k.nodeType ? k : document.createTextNode(String(k)));
+    return el;
+  }
+  const dash = (v, unit = "") => (v == null || v === "" ? "—" : `${v}${unit}`);
+  const m2 = (v) => (v == null ? "—" : `${Number(v).toLocaleString("bg-BG")} кв. м`);
+
+  function kvTable(caption, entries) {
+    return h("div", { class: "tbl" }, h("table", { class: "kv" },
+      caption ? h("caption", { text: caption }) : null,
+      h("tbody", null, entries.map(([k, v]) => h("tr", null, h("th", { scope: "row", text: k }), h("td", { text: v }))))));
+  }
+
+  // ---------- the plot drawing ----------
+  const SVGNS = "http://www.w3.org/2000/svg";
+  const s = (tag, attrs) => { const el = document.createElementNS(SVGNS, tag); for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v); return el; };
+
+  function drawPlot(rings, buildings, label, labelPt) {
+    const all = rings.concat(...buildings.map((b) => b.rings || []));
+    const xs = all.flat().map((p) => p[0]), ys = all.flat().map((p) => p[1]);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    const span = Math.max(x1 - x0, y1 - y0) || 1;
+    const W = 300, H = 300, pad = 34, k = (W - 2 * pad) / span;
+    const ox = pad + (W - 2 * pad - (x1 - x0) * k) / 2, oy = pad + (H - 2 * pad - (y1 - y0) * k) / 2;
+    const tx = ([e, n]) => [ox + (e - x0) * k, oy + (y1 - n) * k];
+    const path = (rs) => rs.map((r) => "M" + r.map((p) => tx(p).map((v) => v.toFixed(1)).join(",")).join("L") + "Z").join("");
+
+    const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `Очертание на имот ${label}` });
+    svg.append(s("path", { d: path(rings), fill: "var(--plot-fill)", stroke: "var(--boundary)", "stroke-width": "1.6", "stroke-linejoin": "round" }));
+    for (const b of buildings) {
+      if (!b.rings) continue;
+      svg.append(s("path", { d: path(b.rings), fill: "var(--building)", stroke: "var(--ink)", "stroke-width": "0.9", "stroke-linejoin": "round" }));
+      const bx = b.rings.flat(), c = tx([bx.reduce((a, p) => a + p[0], 0) / bx.length, bx.reduce((a, p) => a + p[1], 0) / bx.length]);
+      const t = s("text", { x: c[0].toFixed(1), y: (c[1] + 3.5).toFixed(1), "text-anchor": "middle", "font-size": "10", fill: "var(--ink)", "font-family": "inherit" });
+      t.textContent = b.number; svg.append(t);
+    }
+    // plot number at the pole of inaccessibility, as on КККР sheets
+    const lp = tx(labelPt);
+    const nt = s("text", { x: lp[0].toFixed(1), y: (lp[1] + 5).toFixed(1), "text-anchor": "middle", "font-size": "15", "font-weight": "600", fill: "var(--boundary)", "font-family": "inherit" });
+    nt.textContent = label; svg.append(nt);
+
+    // scale bar
+    const nice = [1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000];
+    const len = nice.reduce((best, v) => (v * k <= (W - 2 * pad) * 0.4 ? v : best), 1);
+    const sx = pad, sy = H - 12, sw = len * k;
+    svg.append(s("path", { d: `M${sx},${sy - 4}V${sy}H${sx + sw}V${sy - 4}`, fill: "none", stroke: "var(--ink)", "stroke-width": "1.2" }));
+    const st = s("text", { x: (sx + sw + 6).toFixed(1), y: sy, "font-size": "10", fill: "var(--muted)", "font-family": "inherit" });
+    st.textContent = `${len} м`; svg.append(st);
+    // north
+    svg.append(s("path", { d: `M${W - 18},10 L${W - 13},24 L${W - 18},21 L${W - 23},24 Z`, fill: "var(--ink)" }));
+    return svg;
+  }
+
+  // ---------- result rendering ----------
+  function renderResult(card, r, entry) {
+    const c = r.cadastre, iso = r.isofmap && r.isofmap.found ? r.isofmap : null, a = r.analysis;
+    const side = $(".side", card), body = $(".body", card);
+    side.replaceChildren(); body.replaceChildren();
+
+    // side: drawing + key figures + actions
+    const sheet = h("div", { class: "sheet" });
+    if (iso && iso.rings) sheet.append(drawPlot(iso.rings, (c && c.buildings) || [], r.plot_id.split(".").pop(), iso.sample_points[0]));
+    else sheet.append(h("div", { class: "empty", text: "Очертанието се показва само за имоти в iSofMap." }));
+    side.append(sheet);
+
+    const keys = [];
+    if (c) keys.push(["Площ", m2(c.plot.area_m2)]);
+    const oup = iso && (iso.layers.find((L) => L.layer === "gdp_close_2010") || {}).features;
+    if (oup && oup.length) keys.push(["Зона по ОУП", oup.map((f) => f["Устройствена категория"] || f["Код"] || "—").join(", ")]);
+    const upi = iso && (iso.layers.find((L) => L.layer === "reg_parcel") || {}).features;
+    if (upi && upi.length) {
+      keys.push(["УПИ", upi.map((f) => `${f["УПИ"] || "—"}, кв. ${f["Регулационен квартал"] || "—"}`).join("; ")]);
+      if (upi.length === 1) {
+        const f = upi[0], pick = (re) => (Object.entries(f).find(([k]) => re.test(k)) || [])[1];
+        [["Плътност", /Плътност/i, " %"], ["Кинт", /КИНТ/i, ""], ["Озеленяване", /озеленена/i, " %"], ["Корниз", /корниз/i, " м"]].forEach(([lab, re, u]) => {
+          const v = pick(re); if (v) keys.push([lab, /^[\d.,\s]+$/.test(v) ? v + u : v]);
+        });
+      }
+    }
+    if (c) keys.push(["Сгради", c.buildings.length ? `${c.buildings.length}, общо ${m2(c.buildings_total_built_up_m2)}` : "няма"]);
+    if (keys.length) side.append(h("dl", { class: "keys" }, keys.map(([k, v]) => [h("dt", { text: k }), h("dd", { text: v })])));
+
+    const copy = h("button", { class: "btn", type: "button", text: "Копирай като текст" });
+    copy.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(P.toMarkdown(r)); copy.textContent = "Копирано"; }
+      catch { copy.textContent = "Копирането е блокирано"; }
+      setTimeout(() => (copy.textContent = "Копирай като текст"), 1800);
+    });
+    const link = h("a", { class: "btn", href: `?id=${encodeURIComponent(r.plot_id)}`, text: "Връзка към справката" });
+    side.append(h("div", { class: "actions" }, copy, link));
+
+    // body: heading
+    $(".head p", card).textContent = c ? `${c.plot.location || ""}` : "Не е намерен нито в iSofMap, нито в КАИС.";
+    if (entry.note) body.append(h("p", { class: "absent", text: entry.note }));
+    if (a.warnings.length) body.append(h("ul", { class: "warns" }, a.warnings.map((w) => h("li", { text: w }))));
+
+    // cadastre
+    if (c) {
+      const p = c.plot;
+      const rows = [["Площ", m2(p.area_m2)], ["НТП", dash(p.ntp)], ["Вид територия", dash(p.territory)], ["Собственост", dash(p.ownership)],
+        ["Стар номер / квартал", `${dash(p.old_number)} / ${dash(p.quarter)}`]];
+      if (p.upi) rows.push(["УПИ", p.upi]);
+      if (p.locality) rows.push(["Местност", p.locality]);
+      rows.push(["Основна заповед", P.shortOrder(p.order)]);
+      if (p.neighbours) rows.push(["Съседи", p.neighbours.join(", ") || "—"]);
+      const sec = h("section", { class: "grp" }, h("h3", { text: `Кадастър (${r.primary})` }), kvTable(null, rows));
+      if (c.buildings.length) {
+        sec.append(h("div", { class: "tbl" }, h("table", { class: "list" },
+          h("thead", null, h("tr", null, h("th", { text: "Сграда" }), h("th", { text: "Предназначение" }), h("th", { class: "n", text: "Етажи" }), h("th", { class: "n", text: "ЗП" }))),
+          h("tbody", null, c.buildings.map((b) => h("tr", null, h("td", { text: b.id }), h("td", { text: dash(b.purpose) }), h("td", { class: "n", text: dash(b.floors) }), h("td", { class: "n", text: m2(b.built_up_area_m2) })))))));
+        sec.append(h("p", { class: "sum", text: `Обща застроена площ ${m2(c.buildings_total_built_up_m2)}` + (c.existing_coverage_pct != null ? `, около ${c.existing_coverage_pct}% от имота по кадастрални данни.` : ".") }));
+      } else sec.append(h("p", { class: "sum", text: "Няма регистрирани сгради в имота." }));
+      body.append(sec);
+    }
+
+    // planning groups
+    if (iso) {
+      for (const g of P.GROUPS) {
+        const Ls = iso.layers.filter((L) => L.group === g);
+        if (!Ls.length) continue;
+        const sec = h("section", { class: "grp" }, h("h3", { text: g }));
+        for (const L of Ls) L.features.forEach((f, i) => sec.append(kvTable(L.label + (L.features.length > 1 ? ` (${i + 1})` : ""), Object.entries(f))));
+        if (g === "ПУП" && a.maxima) {
+          const m = a.maxima;
+          sec.append(h("div", { class: "maxima" },
+            h("strong", { text: `Ориентировъчно по показателите на УПИ${m.paired_city ? " (градски стойности)" : ""}: ` }),
+            `ЗП до ${m2(m.built_up_m2)}, РЗП до ${m2(m.gross_m2)}, озеленяване поне ${m2(m.green_m2)}, корниз до ${dash(m.cornice_m, " м")}. ` +
+            `Това са пределни стойности при ${m2(m.base_area_m2)}; реалното застрояване зависи и от линиите на застрояване, отстоянията и ЗУТ.`));
+        }
+        body.append(sec);
+      }
+      const present = new Set(iso.layers.map((L) => L.group));
+      const missing = ["ПУП", "НКЦ"].filter((g) => !present.has(g));
+      if (missing.length) body.append(h("p", { class: "absent", text: `Няма данни в iSofMap за: ${missing.join(", ")}.` }));
+      const errs = Object.keys(iso.errors || {});
+      if (errs.length) body.append(h("p", { class: "absent", text: `Неуспешни слоеве: ${errs.join(", ")}.` }));
+    }
+
+    // КАИС cross-check
+    const k = r.kais;
+    if (r.primary === "iSofMap" && k && k.found) {
+      const d = P.kaisDiffs(r);
+      const sec = h("section", { class: "grp" }, h("h3", { text: "Сравнение с КАИС" }));
+      if (k.plot.neighbours && k.plot.neighbours.length) sec.append(kvTable(null, [["Съседи", k.plot.neighbours.join(", ")]]));
+      sec.append(d.length ? h("ul", { class: "warns" }, h("li", { text: `Разлики: ${d.join("; ")}. iSofMap може да изостава от КККР — при разминаване вярвайте на КАИС.` }))
+                          : h("p", { class: "sum", text: "Площта и броят сгради съвпадат с КАИС." }));
+      body.append(sec);
+    } else if (withKais.checked && k && k.error) body.append(h("p", { class: "error", text: `КАИС: ${k.error}` }));
+
+    const notes = [...r.notes, ...a.notes];
+    if (notes.length) body.append(h("ul", { class: "notes" }, notes.map((n) => h("li", { text: n }))));
+  }
+
+  function cardFor(entry) {
+    const card = h("article", { class: "plot" },
+      h("div", { class: "side" }),
+      h("div", { class: "col" },
+        h("div", { class: "head" }, h("h2", { text: `ПИ ${entry.id || entry.input}` }), h("p")),
+        h("div", { class: "status", role: "status", text: "Търсене…" }),
+        h("div", { class: "body" })));
+    return card;
+  }
+
+  async function run(text) {
+    const entries = P.parseIds(text);
+    results.replaceChildren();
+    if (!entries.length) { results.append(h("p", { class: "error", text: "Въведете идентификатор във формат ЕКАТТЕ.район.имот, напр. 44063.6207.271." })); return; }
+    if (!configured) { results.append(h("p", { class: "error", text: "Липсва адрес на Worker (window.PLOT_API)." })); return; }
+    const ids = entries.filter((e) => e.id).map((e) => e.id);
+    history.replaceState(null, "", ids.length ? `?id=${ids.map(encodeURIComponent).join(",")}${withKais.checked ? "&kais=1" : ""}` : location.pathname);
+    go.disabled = true;
+    try {
+      for (const entry of entries) {
+        if (entry.error) { results.append(h("p", { class: "error", text: entry.error })); continue; }
+        const card = cardFor(entry); results.append(card);
+        const status = $(".status", card);
+        try {
+          const r = await P.lookupOne(api, entry.id, { withKais: withKais.checked, progress: (t) => (status.textContent = `Търсене: ${t}`) });
+          status.remove();
+          renderResult(card, r, entry);
+        } catch (e) {
+          status.remove();
+          $(".body", card).append(h("p", { class: "error", text: `Грешка: ${e.message || e}. Проверете дали Worker-ът е достъпен.` }));
+        }
+      }
+    } finally { go.disabled = false; }
+  }
+
+  form.addEventListener("submit", (e) => { e.preventDefault(); run(input.value); });
+  document.querySelectorAll("[data-ex]").forEach((b) => b.addEventListener("click", () => { input.value = b.dataset.ex; run(input.value); }));
+
+  const qs = new URLSearchParams(location.search);
+  if (qs.get("kais") === "1") withKais.checked = true;
+  if (qs.get("id")) { input.value = qs.get("id").split(",").join(" "); run(input.value); }
+})();
+</script>
+</body>
+</html>

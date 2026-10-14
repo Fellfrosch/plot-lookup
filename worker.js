@@ -1,27 +1,20 @@
 // Cloudflare Worker — справка за поземлен имот + лог на търсенията.
 //
-// Един Worker обслужва всичко на един адрес (напр. https://plot-lookup.<акаунт>.workers.dev):
+// Един Worker обслужва всичко на един адрес (https://plot-lookup.<акаунт>.workers.dev):
 //   GET  /  , /index.html, /core.js        -> страницата (взема се от GitHub репото, PAGE_SOURCE)
 //   GET  /isofmap?SERVICE=WMS|WFS&REQUEST=…  -> прокси към http://www.isofmap.bg/owsmap
 //   GET  /kais?id=44063.6207.271[&miss=3]    -> КАИС имот + сгради (суров HTML на панела)
-//   POST /log    {"plot":"68134.1107.331"}   -> записва търсене: имот, имейл, време
-//   GET  /admin  [?email=…&plot=…&days=30&format=csv] -> списък с търсенията, само за ADMIN_EMAIL
+//   POST /log  {"plot":"68134.1107.331","email":"ime@firma.bg"} -> записва търсене
+//   GET  /admin?key=<ADMIN_KEY>             -> списък с търсенията (ключът се помни в бисквитка)
 //   GET  /health                             -> проверка, че Worker-ът работи
 //
-// Защо Worker: iSofMap е само по http (браузърът блокира такива заявки от https страница),
-// а КАИС иска сесия и CSRF токен. Цялата обработка на данните е в браузъра (core.js).
-//
-// Вход: Cloudflare Access (One-time PIN по имейл) пред целия адрес. Worker-ът сам проверява
-// подписа на Access токена, така че имейлът в лога не може да бъде подправен.
+// Страницата е публична. Имейлът се въвежда от потребителя и не се проверява.
 //
 // Bindings и променливи (Settings → Bindings / Variables and Secrets):
 //   DB              – D1 база (binding с име DB)
-//   TEAM_DOMAIN     – напр. all1studio.cloudflareaccess.com
-//   POLICY_AUD      – AUD tag на Access приложението (няколко — разделени със запетая)
-//   ADMIN_EMAIL     – единственият имейл с достъп до /admin (по-добре като Secret)
-//   PAGE_SOURCE     – откъде да се взема страницата; по подразбиране GitHub репото по-долу
-//   RETENTION_DAYS  – след колко дни записите се трият (по подразбиране 365)
-// Когато TEAM_DOMAIN и POLICY_AUD са зададени, всяка заявка без валиден вход се отказва.
+//   ADMIN_KEY       – Secret: дълга случайна парола за /admin
+//   PAGE_SOURCE     – по желание; откъде се взема страницата (по подразбиране GitHub репото)
+//   RETENTION_DAYS  – по желание; след колко дни записите се трият (по подразбиране 365)
 
 const PAGE_SOURCE_DEFAULT = "https://raw.githubusercontent.com/fellfrosch/plot-lookup/main";
 const PAGE_FILES = {
@@ -35,6 +28,7 @@ const KAIS = "https://kais.cadastre.bg";
 const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36";
 const PLOT_RE = /^\d{5}\.\d{1,5}\.\d{1,5}$/;
 const LOG_RE = /^\d{5}\.\d{1,5}\.\d{1,5}(\.\d{1,3})?$/;
+const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/;
 const ISO_SERVICES = new Set(["WMS", "WFS"]);
 const ISO_REQUESTS = new Set(["GetFeature", "GetFeatureInfo", "GetCapabilities"]);
 // Безплатният план позволява 50 подзаявки на извикване; оставяме резерв.
@@ -44,16 +38,9 @@ export default {
   async fetch(req, env) {
     const url = new URL(req.url);
     try {
-      // ---- вход ----
-      const accessOn = Boolean(env.TEAM_DOMAIN && env.POLICY_AUD);
-      const email = accessOn ? await verifiedEmail(req, env) : null;
-      if (accessOn && !email) {
-        return text("Нужен е вход с разрешен имейл. Презаредете страницата.", 401);
-      }
-
       // ---- страницата ----
       if (req.method === "GET" && PAGE_FILES[url.pathname]) return await page(url.pathname, env);
-      if (url.pathname === "/health") return json({ ok: true, service: "plot-lookup", access: accessOn });
+      if (url.pathname === "/health") return json({ ok: true, service: "plot-lookup", db: Boolean(env.DB) });
 
       // ---- данни ----
       if (req.method === "GET" && url.pathname === "/isofmap") return await isofmap(url);
@@ -61,20 +48,34 @@ export default {
 
       // ---- лог ----
       if (req.method === "POST" && url.pathname === "/log") {
-        if (!email) return json({ error: "Записът изисква вход през Cloudflare Access" }, 401);
         if (!env.DB) return json({ error: "Няма D1 binding с име DB" }, 500);
-        const { plot } = await req.json().catch(() => ({}));
+        const { plot, email } = await req.json().catch(() => ({}));
         if (typeof plot !== "string" || !LOG_RE.test(plot.trim())) {
           return json({ error: "Невалиден идентификатор на имот" }, 400);
         }
+        const mail = typeof email === "string" ? email.trim().toLowerCase() : "";
+        if (!EMAIL_RE.test(mail)) return json({ error: "Невалиден имейл" }, 400);
         await env.DB.prepare("INSERT INTO searches (plot, email, ts) VALUES (?, ?, ?)")
-          .bind(plot.trim(), email, Math.floor(Date.now() / 1000)).run();
+          .bind(plot.trim(), mail, Math.floor(Date.now() / 1000)).run();
         return json({ ok: true });
       }
 
+      // ---- админ ----
       if (req.method === "GET" && url.pathname === "/admin") {
-        const adminEmail = String(env.ADMIN_EMAIL || "").trim().toLowerCase();
-        if (!email || !adminEmail || email !== adminEmail) return text("Нямате достъп до тази страница.", 403);
+        if (!env.ADMIN_KEY) return text("Задайте ADMIN_KEY в настройките на Worker-а.", 500);
+        const want = await sha256(env.ADMIN_KEY);
+        const given = url.searchParams.get("key");
+        if (given) {
+          // Правилен ключ в адреса -> бисквитка за 30 дни и пренасочване без ключа в адреса.
+          if ((await sha256(given)) !== want) return text("Грешен ключ.", 403);
+          const clean = new URL(url); clean.searchParams.delete("key");
+          return new Response(null, { status: 303, headers: {
+            Location: clean.pathname + clean.search,
+            "Set-Cookie": `pl_admin=${want}; Path=/admin; Max-Age=2592000; HttpOnly; Secure; SameSite=Strict`,
+            "Cache-Control": "no-store",
+          } });
+        }
+        if (cookie(req, "pl_admin") !== want) return text("Нямате достъп до тази страница.", 403);
         return await admin(url, env);
       }
 
@@ -107,6 +108,15 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmt = (ts) => new Date(ts * 1000).toLocaleString("bg-BG", { timeZone: "Europe/Sofia" });
 
+async function sha256(s) {
+  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(s)));
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+function cookie(req, name) {
+  const m = (req.headers.get("Cookie") || "").match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));
+  return m ? m[1] : null;
+}
+
 // ---------------- страницата от GitHub ----------------
 async function page(path, env) {
   const [file, type] = PAGE_FILES[path];
@@ -115,53 +125,8 @@ async function page(path, env) {
   const r = await fetch(`${base}/${file}`, { cf: { cacheTtl: 300, cacheEverything: true } });
   if (!r.ok) return text(`Страницата не може да се зареди от ${base}/${file} (HTTP ${r.status}).`, 502);
   return new Response(r.body, {
-    headers: { "Content-Type": type, "Cache-Control": "private, max-age=60", "X-Content-Type-Options": "nosniff" },
+    headers: { "Content-Type": type, "Cache-Control": "public, max-age=60", "X-Content-Type-Options": "nosniff" },
   });
-}
-
-// ---------------- Cloudflare Access JWT ----------------
-let certs = { keys: null, at: 0 };
-
-async function accessKeys(env) {
-  if (certs.keys && Date.now() - certs.at < 3600_000) return certs.keys;
-  const r = await fetch(`https://${env.TEAM_DOMAIN}/cdn-cgi/access/certs`);
-  if (!r.ok) throw new Error("Access certs unavailable");
-  certs = { keys: (await r.json()).keys, at: Date.now() };
-  return certs.keys;
-}
-
-function b64url(s) {
-  s = s.replace(/-/g, "+").replace(/_/g, "/");
-  s += "=".repeat((4 - (s.length % 4)) % 4);
-  return Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
-}
-
-// Връща потвърдения имейл или null. Проверява подписа, аудиторията, издателя и срока.
-export async function verifiedEmail(req, env) {
-  const token = req.headers.get("Cf-Access-Jwt-Assertion");
-  if (!token) return null;
-  const [h, p, sig] = token.split(".");
-  if (!h || !p || !sig) return null;
-  try {
-    const dec = new TextDecoder();
-    const header = JSON.parse(dec.decode(b64url(h)));
-    const payload = JSON.parse(dec.decode(b64url(p)));
-    const jwk = (await accessKeys(env)).find((k) => k.kid === header.kid);
-    if (!jwk) return null;
-    const key = await crypto.subtle.importKey(
-      "jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
-    const ok = await crypto.subtle.verify(
-      "RSASSA-PKCS1-v1_5", key, b64url(sig), new TextEncoder().encode(`${h}.${p}`));
-    if (!ok) return null;
-    const allowedAud = String(env.POLICY_AUD || "").split(",").map((s) => s.trim()).filter(Boolean);
-    const aud = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
-    if (!aud.some((a) => allowedAud.includes(a))) return null;
-    if (payload.iss !== `https://${env.TEAM_DOMAIN}`) return null;
-    if (!payload.exp || payload.exp * 1000 < Date.now()) return null;
-    return payload.email ? String(payload.email).toLowerCase() : null;
-  } catch {
-    return null;
-  }
 }
 
 // ---------------- /admin ----------------

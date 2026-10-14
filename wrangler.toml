@@ -7,13 +7,11 @@ compatibility_date = "2025-01-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "plot-lookup-db"
-database_id = "<ID на базата от D1>"
+database_id = "5a3fc338-9493-4359-9d68-3deb410eea05"
 
 [vars]
-TEAM_DOMAIN = "<екип>.cloudflareaccess.com"
-POLICY_AUD = "<AUD tag на Access приложението>"
 RETENTION_DAYS = "365"
-# ADMIN_EMAIL е тайна: npx wrangler secret put ADMIN_EMAIL
+# ADMIN_KEY е тайна: npx wrangler secret put ADMIN_KEY
 
 # Изтрива записи по-стари от RETENTION_DAYS всяка нощ в 03:00 UTC
 [triggers]

@@ -77,6 +77,13 @@
     font-family: inherit; font-size: 1rem; font-weight: 600; padding: 0 20px; cursor: pointer;
   }
   .field button:disabled { opacity: .6; cursor: progress; }
+  .mail { flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; font-size: .9375rem; color: var(--muted); }
+  .mail input {
+    flex: 0 1 320px; min-width: 0; font: inherit; color: var(--ink); background: var(--sheet);
+    border: 1px solid var(--rule); border-radius: 3px; padding: 7px 10px;
+  }
+  .mail input:focus { outline: 2px solid var(--focus); outline-offset: 1px; border-color: var(--focus); }
+  .mail .why { flex-basis: 100%; font-size: .8125rem; }
   label.opt { display: inline-flex; gap: 8px; align-items: center; color: var(--muted); font-size: .9375rem; cursor: pointer; }
   label.opt input { width: 16px; height: 16px; accent-color: var(--reg); }
   .examples { margin: 10px 0 0; font-size: .9375rem; color: var(--muted); }
@@ -149,6 +156,11 @@
   <h1>Справка за поземлен имот</h1>
   <p class="lede">Кадастър, сгради, ОУП, ПУП и УПИ, НКЦ и общинска собственост по идентификатор. За Столична община данните са от iSofMap, за останалата страна — от КАИС.</p>
   <form class="search" id="form" autocomplete="off">
+    <div class="mail">
+      <label for="email">Вашият имейл</label>
+      <input id="email" name="email" type="email" required autocomplete="email" inputmode="email" placeholder="ime@firma.bg" spellcheck="false">
+      <span class="why">Задължителен е за всяка справка. Записваме кои имоти са проверявани и от кого, само за вътрешна статистика.</span>
+    </div>
     <div class="field">
       <input id="ids" name="ids" inputmode="decimal" aria-label="Идентификатор на поземлен имот" placeholder="44063.6207.271" spellcheck="false">
       <button id="go" type="submit">Провери</button>
@@ -167,7 +179,7 @@
 <footer class="wrap">
   <p>Данните идват на живо от iSofMap (ГИС-София) и КАИС (АГКК). iSofMap може да изостава от КККР с няколко седмици; при съмнение пуснете сравнението с КАИС.</p>
   <p>Показателите по ОУП и ПУП са пределни. Справката не замества скица, виза или удостоверение. Имена на собственици и самостоятелни обекти не са публични.</p>
-  <p>Търсенията се записват заедно с имейла ви за вътрешна статистика.</p>
+  <p>Търсенията се записват заедно с имейла ви за вътрешна статистика и се пазят до 12 месеца.</p>
   <p>© 2026 Petar Penchev / <a href="https://all1studio.com" target="_blank" rel="noopener">All1 Studio</a>. Built with Claude.</p>
 </footer>
 
@@ -182,12 +194,20 @@
   if (!configured) $("#config").hidden = false;
   const api = new P.Api(API);
 
-  // Записва търсенето (имот + имейл от входа) в лога. Грешка тук не спира справката.
-  function logSearch(plot) {
+  // ---------- имейл: задължителен при всяко отваряне на страницата, не се запомня ----------
+  const emailIn = $("#email");
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+  function currentEmail() {
+    const v = emailIn.value.trim().toLowerCase();
+    return EMAIL_RE.test(v) ? v : null;
+  }
+
+  // Записва търсенето (имот + имейл) в лога. Грешка тук не спира справката.
+  function logSearch(plot, email) {
     fetch(`${API}/log`, {
-      method: "POST", credentials: "same-origin",
+      method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plot }),
+      body: JSON.stringify({ plot, email }),
     }).catch(() => {});
   }
 
@@ -361,6 +381,12 @@
   }
 
   async function run(text) {
+    const email = currentEmail();
+    if (!email) {
+      results.replaceChildren(h("p", { class: "error", text: "Въведете имейла си и натиснете „Провери“." }));
+      emailIn.focus();
+      return;
+    }
     const entries = P.parseIds(text);
     results.replaceChildren();
     if (!entries.length) { results.append(h("p", { class: "error", text: "Въведете идентификатор във формат ЕКАТТЕ.район.имот, напр. 44063.6207.271." })); return; }
@@ -371,7 +397,7 @@
     try {
       for (const entry of entries) {
         if (entry.error) { results.append(h("p", { class: "error", text: entry.error })); continue; }
-        logSearch(entry.id);
+        logSearch(entry.id, email);
         const card = cardFor(entry); results.append(card);
         const status = $(".status", card);
         try {

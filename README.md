@@ -3,63 +3,61 @@
 Уеб страница, която по кадастрален идентификатор (напр. `44063.6207.271`) показва
 кадастъра и сградите, ОУП, ПУП/УПИ, НКЦ и общинската собственост, плюс очертанието на имота.
 За Столична община данните са от iSofMap, за останалата страна от КАИС.
+Всяко търсене се записва с имейла на колегата; списъкът е видим само за администратора.
 
 ```
-GitHub Pages (index.html + core.js)  ──►  Cloudflare Worker (worker.js)  ──►  iSofMap / КАИС
+Колега ──► Cloudflare Access (вход с код по имейл)
+              │
+              ▼
+      Cloudflare Worker  plot-lookup.petar-ppenchev.workers.dev
+        ├─ /  , /core.js   ◄── взема страницата от GitHub (това repo)
+        ├─ /isofmap, /kais ──► iSofMap / КАИС
+        ├─ /log            ──► D1 база (имот, имейл, време)
+        └─ /admin          ──► списък с търсенията (само ADMIN_EMAIL)
 ```
 
-Worker-ът е нужен по две причини. iSofMap работи само по http, а GitHub Pages е https,
-и браузърът блокира такива заявки. КАИС пък изисква сесия и CSRF токен и не позволява
-заявки от чужди сайтове. Worker-ът само пренася данните; цялата обработка е в `core.js`.
+GitHub пази кода. Промяна в `index.html` или `core.js` тук се вижда на сайта до 5 минути
+след commit. Промяна в `worker.js` трябва да се постави ръчно в Cloudflare.
 
-## 1. Cloudflare Worker
+Старият адрес `https://fellfrosch.github.io/plot-lookup/` пренасочва към Worker-а.
 
-**През сайта на Cloudflare (най-лесно):**
+## Файлове
 
-1. Dashboard → **Workers & Pages** → **Create** → **Create Worker**.
-2. Име: `plot-lookup` → **Deploy**.
-3. **Edit code** → изтрийте примерния код, поставете съдържанието на `worker.js` → **Deploy**.
-4. Запишете адреса, например `https://plot-lookup.petar.workers.dev`.
-   Отворен в браузъра, трябва да покаже `{"ok":true,...}`.
+| Файл | Къде живее |
+|---|---|
+| `index.html`, `core.js`, `.nojekyll` | GitHub (оттам ги чете Worker-ът) |
+| `worker.js` | Копира се в Cloudflare → Worker → Edit code |
+| `schema.sql` | Изпълнява се веднъж в D1 конзолата |
+| `wrangler.toml` | Само ако деплойваш с `npx wrangler deploy` |
 
-**Или с Wrangler:** `npx wrangler deploy` в тази папка.
+## Настройки на Worker-а
 
-**По желание — ограничаване до вашия сайт:** Worker → Settings → Variables →
-добавете `ALLOWED_ORIGINS` = `https://ВАШИЯТ-ПРОФИЛ.github.io`. Тогава други сайтове не
-могат да го вграждат. (Това не е защита срещу скриптове, само срещу чужди страници.)
+| Име | Вид | Стойност |
+|---|---|---|
+| `DB` | D1 binding | базата `plot-lookup-db` |
+| `TEAM_DOMAIN` | Text | `<екип>.cloudflareaccess.com` |
+| `POLICY_AUD` | Text | AUD tag на Access приложението |
+| `ADMIN_EMAIL` | Secret | твоят имейл |
+| `RETENTION_DAYS` | Text, по желание | `365` |
+| `PAGE_SOURCE` | Text, по желание | по подразбиране `https://raw.githubusercontent.com/fellfrosch/plot-lookup/main` |
+| Cron Trigger | Trigger | `0 3 * * *` (нощно изтриване на стари записи) |
 
-## 2. GitHub Pages
+Докато `TEAM_DOMAIN` и `POLICY_AUD` не са зададени, страницата работи без вход и без лог.
 
-1. В `index.html` сменете реда
-   `window.PLOT_API = "https://plot-lookup.YOUR-SUBDOMAIN.workers.dev";`
-   с адреса на вашия Worker.
-2. Качете `index.html`, `core.js` и `.nojekyll` в repo (напр. `plot-lookup`).
-   `worker.js`, `wrangler.toml` и този README могат да са в същото repo.
-3. Repo → **Settings → Pages** → Source: *Deploy from a branch*, Branch: `main`, папка `/ (root)`.
-4. След минута страницата е на `https://ВАШИЯТ-ПРОФИЛ.github.io/plot-lookup/`.
+## Лимити (безплатен план)
 
-Връзки към конкретна справка: `…/plot-lookup/?id=68134.630.52`
-(няколко: `?id=ID1,ID2`, със сравнение с КАИС: `&kais=1`).
-
-## Лимити (безплатен план на Cloudflare)
-
-- 100 000 заявки на ден към Worker-а. Една справка в София прави около 40–60
-  (по една на слой на iSofMap), тоест около 2 000 справки на ден.
-- 50 подзаявки на едно извикване. За КАИС това стига за около 13 сгради в имота;
-  при повече страницата показва бележка, че списъкът е непълен.
-
-## Локален тест
-
-```
-npx wrangler dev                     # Worker на http://localhost:8787
-python3 -m http.server 8000          # страницата на http://localhost:8000
-```
-и временно сложете `window.PLOT_API = "http://localhost:8787"`.
+- 100 000 заявки на ден към Worker-а; справка в София прави 40–60, т.е. ~2 000 справки на ден.
+- 50 подзаявки на извикване — за КАИС около 13 сгради в имот.
+- Cloudflare Access: безплатен до 50 потребители.
+- D1: 5 GB и 100 000 записа на ден — далеч над нуждите.
 
 ## Поддръжка
 
-- Слоевете на iSofMap са в `LAYERS` в началото на `core.js` (същият списък като
-  `isofmap_layers.json` в скила). Пълният каталог:
-  `http://www.isofmap.bg/owsmap?SERVICE=WMS&REQUEST=GetCapabilities`.
+- Слоевете на iSofMap са в `LAYERS` в началото на `core.js`.
+  Каталог: `http://www.isofmap.bg/owsmap?SERVICE=WMS&REQUEST=GetCapabilities`.
 - Ако КАИС смени страницата си, проверете регулярните изрази в `kaisLookup` (`core.js`)
   и извличането на токена в `worker.js`.
+- Имейлите са лични данни: бележката във footer-а уведомява колегите, а записите над
+  `RETENTION_DAYS` се трият автоматично.
+
+© 2026 Petar Penchev / All1 Studio. Built with Claude.

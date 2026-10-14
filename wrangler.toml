@@ -1,8 +1,20 @@
+# Нужно само ако деплойваш с Wrangler (npx wrangler deploy).
+# При деплой през сайта на Cloudflare настройките се задават в Worker → Settings.
 name = "plot-lookup"
 main = "worker.js"
 compatibility_date = "2025-01-01"
 
+[[d1_databases]]
+binding = "DB"
+database_name = "plot-lookup-db"
+database_id = "<ID на базата от D1>"
+
 [vars]
-# Кои сайтове могат да ползват Worker-а. "*" = всички.
-# Пример: "https://petar.github.io,http://localhost:8000"
-ALLOWED_ORIGINS = "*"
+TEAM_DOMAIN = "<екип>.cloudflareaccess.com"
+POLICY_AUD = "<AUD tag на Access приложението>"
+RETENTION_DAYS = "365"
+# ADMIN_EMAIL е тайна: npx wrangler secret put ADMIN_EMAIL
+
+# Изтрива записи по-стари от RETENTION_DAYS всяка нощ в 03:00 UTC
+[triggers]
+crons = ["0 3 * * *"]

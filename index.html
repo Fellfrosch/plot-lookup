@@ -10,8 +10,13 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600&display=swap" rel="stylesheet">
 <script>
-  // ⇩ Адресът на вашия Cloudflare Worker (без наклонена черта накрая).
-  window.PLOT_API = "https://plot-lookup.petar-ppenchev.workers.dev";
+  // ⇩ Адресът на Cloudflare Worker-а (без наклонена черта накрая).
+  // Страницата се отваря през Worker-а (зад вход с имейл). Ако някой отвори старото
+  // копие в GitHub Pages, го пренасочваме към Worker-а, за да мине през входа и лога.
+  window.PLOT_WORKER = "https://plot-lookup.petar-ppenchev.workers.dev";
+  if (/\.github\.io$/.test(location.hostname)) location.replace(window.PLOT_WORKER + "/" + location.search);
+  window.PLOT_API = /^https?:$/.test(location.protocol) && !/^(localhost|127\.0\.0\.1)$/.test(location.hostname)
+    ? location.origin : window.PLOT_WORKER;
 </script>
 <style>
   :root {
@@ -136,6 +141,7 @@
 
   footer { border-top: 1px solid var(--rule); padding: 20px 0 32px; color: var(--muted); font-size: .875rem; }
   footer p { margin: 0 0 6px; max-width: 78ch; }
+  footer a { color: inherit; }
 </style>
 </head>
 <body>
@@ -161,6 +167,8 @@
 <footer class="wrap">
   <p>Данните идват на живо от iSofMap (ГИС-София) и КАИС (АГКК). iSofMap може да изостава от КККР с няколко седмици; при съмнение пуснете сравнението с КАИС.</p>
   <p>Показателите по ОУП и ПУП са пределни. Справката не замества скица, виза или удостоверение. Имена на собственици и самостоятелни обекти не са публични.</p>
+  <p>Търсенията се записват заедно с имейла ви за вътрешна статистика.</p>
+  <p>© 2026 Petar Penchev / <a href="https://all1studio.com" target="_blank" rel="noopener">All1 Studio</a>. Built with Claude.</p>
 </footer>
 
 <script src="core.js"></script>
@@ -173,6 +181,15 @@
   const form = $("#form"), input = $("#ids"), go = $("#go"), withKais = $("#withKais"), results = $("#results");
   if (!configured) $("#config").hidden = false;
   const api = new P.Api(API);
+
+  // Записва търсенето (имот + имейл от входа) в лога. Грешка тук не спира справката.
+  function logSearch(plot) {
+    fetch(`${API}/log`, {
+      method: "POST", credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plot }),
+    }).catch(() => {});
+  }
 
   // ---------- tiny DOM helpers (all external data goes through textContent) ----------
   function h(tag, attrs, ...kids) {
@@ -354,6 +371,7 @@
     try {
       for (const entry of entries) {
         if (entry.error) { results.append(h("p", { class: "error", text: entry.error })); continue; }
+        logSearch(entry.id);
         const card = cardFor(entry); results.append(card);
         const status = $(".status", card);
         try {
